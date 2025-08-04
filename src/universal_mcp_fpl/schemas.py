@@ -168,3 +168,5 @@ class GetStandingsresponse(BaseModel):
     response: Optional[List[Any]] = None
 
 
+class GetWidgetGamesresponse(BaseModel):
+    pass
