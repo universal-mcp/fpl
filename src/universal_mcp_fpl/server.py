@@ -7,14 +7,14 @@ from universal_mcp_fpl.app import FplApp
 
 env_store = EnvironmentStore()
 # "name" used in AgentRIntegration should match the actual name from the backend
-integration_instance = AgentRIntegration(name="fpl", store=env_store)
-app_instance = FplApp(integration=integration_instance)
+# integration_instance = AgentRIntegration(name="fpl", store=env_store)
+app_instance = FplApp(integration=None)
 
 mcp = SingleMCPServer(
     app_instance=app_instance,
 )
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(transport="sse")
 
 
