@@ -1,13 +1,13 @@
 from universal_mcp.applications import APIApplication
 from universal_mcp.integrations import Integration
 from typing import Any
-from universal_mcp_fpl.helper import get_player_info, search_players, get_players_resource
+from universal_mcp_fpl.helper import get_player_info, search_players, get_players_resource, find_players_by_name
 import datetime
 from universal_mcp_fpl.api import api
 from universal_mcp_fpl.position_utils import normalize_position
 from collections import Counter
 
-from universal_mcp_fpl.fixtures import get_player_gameweek_history
+from universal_mcp_fpl.fixtures import get_player_gameweek_history, get_blank_gameweeks, get_double_gameweeks, analyze_player_fixtures
 
 
 
@@ -387,7 +387,275 @@ class FplApp(APIApplication):
         return result
         
 
+    def compare_players(self,
+        player_names: list[str],
+        metrics: list[str] = ["total_points", "form", "goals_scored", "assists", "bonus"],
+        include_gameweeks: bool = False,
+        num_gameweeks: int = 5,
+        include_fixture_analysis: bool = True
+    ) -> dict[str, Any]:
+        """Compare multiple players across various metrics
+        
+        Args:
+            player_names: List of player names to compare (2-5 players recommended)
+            metrics: List of metrics to compare
+            include_gameweeks: Whether to include gameweek-by-gameweek comparison
+            num_gameweeks: Number of recent gameweeks to include in comparison
+            include_fixture_analysis: Whether to include fixture analysis including blanks and doubles
+            
+        Returns:
+            Detailed comparison of players across the specified metrics
 
+        Raises:
+            ValueError: Raised when player_names parameter is empty or invalid.
+            TypeError: Raised when metrics parameter is invalid.
+
+        Tags:
+            players, compare, important
+        """
+
+        if not player_names or len(player_names) < 2:
+            return {"error": "Please provide at least two player names to compare"}
+        
+        # Find all players by name
+        players_data = {}
+        for name in player_names:
+            matches = find_players_by_name(name, limit=3)  # Get more matches to find active players
+            if not matches:
+                return {"error": f"No player found matching '{name}'"}
+                
+            # Filter to active players
+            active_matches = [p for p in matches]
+                
+            # Use first active match
+            player = active_matches[0]
+            players_data[name] = player
+        
+        # Build comparison structure
+        comparison = {
+            "players": {
+                name: {
+                    "id": player["id"],
+                    "name": player["name"],
+                    "team": player["team"],
+                    "position": player["position"],
+                    "price": player["price"],
+                    "status": "available" if player["status"] == "a" else "unavailable",
+                    "news": player.get("news", ""),
+                } for name, player in players_data.items()
+            },
+            "metrics_comparison": {}
+        }
+        
+        # Compare all requested metrics
+        for metric in metrics:
+            metric_values = {}
+            
+            for name, player in players_data.items():
+                if metric in player:
+                    # Try to convert to numeric if possible
+                    try:
+                        value = float(player[metric])
+                    except (ValueError, TypeError):
+                        value = player[metric]
+                        
+                    metric_values[name] = value
+            
+            if metric_values:
+                comparison["metrics_comparison"][metric] = metric_values
+        
+        # Include gameweek comparison if requested
+        if include_gameweeks:
+            try:
+                gameweek_comparison = {}
+                recent_form_comparison = {}
+                gameweek_range = []
+                
+                # Get gameweek data for each player
+                for name, player in players_data.items():
+                    player_history = get_player_gameweek_history([player["id"]], num_gameweeks)
+                    
+                    if "players" in player_history and player["id"] in player_history["players"]:
+                        history = player_history["players"][player["id"]]
+                        gameweek_comparison[name] = history
+                        
+                        # Store gameweek range
+                        if "gameweeks" in player_history and not gameweek_range:
+                            gameweek_range = player_history["gameweeks"]
+                        
+                        # Calculate aggregated recent form stats
+                        recent_stats = {
+                            "matches": len(history),
+                            "minutes": 0,
+                            "points": 0,
+                            "goals": 0,
+                            "assists": 0,
+                            "clean_sheets": 0,
+                            "bonus": 0,
+                            "expected_goals": 0,
+                            "expected_assists": 0,
+                            "expected_goal_involvements": 0,
+                            "points_per_game": 0
+                        }
+                        
+                        # Sum up stats from gameweek history
+                        for gw in history:
+                            recent_stats["minutes"] += gw.get("minutes", 0)
+                            recent_stats["points"] += gw.get("points", 0)
+                            recent_stats["goals"] += gw.get("goals", 0)
+                            recent_stats["assists"] += gw.get("assists", 0)
+                            recent_stats["clean_sheets"] += gw.get("clean_sheets", 0)
+                            recent_stats["bonus"] += gw.get("bonus", 0)
+                            recent_stats["expected_goals"] += int(float(gw.get("expected_goals", 0)))
+                            recent_stats["expected_assists"] += int(float(gw.get("expected_assists", 0)))
+                            recent_stats["expected_goal_involvements"] += int(float(gw.get("expected_goal_involvements", 0)))
+                        if recent_stats["matches"] > 0:
+                            recent_stats["points_per_game"] = int(round(recent_stats["points"] / recent_stats["matches"], 1))
+                        
+                        # Round floating point values
+                        recent_stats["expected_goals"] = round(recent_stats["expected_goals"], 2)
+                        recent_stats["expected_assists"] = round(recent_stats["expected_assists"], 2)
+                        recent_stats["expected_goal_involvements"] = round(recent_stats["expected_goal_involvements"], 2)
+                        
+                        recent_form_comparison[name] = recent_stats
+                
+                # Only add to result if we have data
+                if gameweek_comparison:
+                    comparison["gameweek_comparison"] = gameweek_comparison
+                    comparison["gameweek_range"] = gameweek_range
+                    
+                    # Add recent form comparison section
+                    comparison["recent_form_comparison"] = {
+                        "description": f"Aggregated stats for the last {num_gameweeks} gameweeks only",
+                        "gameweeks_analyzed": gameweek_range,
+                        "player_stats": recent_form_comparison
+                    }
+                    
+                    # Add best performer for recent form metrics
+                    comparison["recent_form_best"] = {}
+                    
+                    # Compare players on key recent form metrics
+                    for metric in ["points", "goals", "assists", "expected_goals", "expected_assists"]:
+                        values = {name: stats[metric] for name, stats in recent_form_comparison.items()}
+                        if values and all(isinstance(v, (int, float)) for v in values.values()):
+                            best_player = max(values.items(), key=lambda x: x[1])[0]
+                            comparison["recent_form_best"][metric] = best_player
+                    
+                    # Add label to metrics to indicate they're season-long stats
+                    for metric, values in comparison["metrics_comparison"].items():
+                        comparison["metrics_comparison"][metric] = {
+                            "stats_type": "season_totals",
+                            "values": values
+                        }
+            except Exception as e:
+                comparison["gameweek_comparison_error"] = str(e)
+        
+        # Include fixture analysis if requested
+        if include_fixture_analysis:
+            fixture_comparison = {}
+            fixture_scores = {}
+            blank_gameweek_impacts = {}
+            double_gameweek_impacts = {}
+            
+            # Get upcoming fixtures for each player
+            for name, player in players_data.items():
+                try:
+                    # Get fixture analysis
+                    player_fixture_analysis = analyze_player_fixtures(player["id"], num_gameweeks)
+                    
+                    # Format fixture data
+                    fixtures_data = []
+                    if "fixture_analysis" in player_fixture_analysis and "fixtures_analyzed" in player_fixture_analysis["fixture_analysis"]:
+                        fixtures_data = player_fixture_analysis["fixture_analysis"]["fixtures_analyzed"]
+                    
+                    fixture_comparison[name] = fixtures_data
+                    
+                    # Store fixture difficulty score
+                    if "fixture_analysis" in player_fixture_analysis and "difficulty_score" in player_fixture_analysis["fixture_analysis"]:
+                        fixture_scores[name] = player_fixture_analysis["fixture_analysis"]["difficulty_score"]
+                    
+                    # Check for blank gameweeks
+                    team_name = player["team"]
+                    blank_gws = get_blank_gameweeks(num_gameweeks)
+                    blank_impact = []
+                    
+                    for blank_gw in blank_gws:
+                        for team_info in blank_gw.get("teams_without_fixtures", []):
+                            if team_info.get("name") == team_name:
+                                blank_impact.append(blank_gw["gameweek"])
+                    
+                    blank_gameweek_impacts[name] = blank_impact
+                    
+                    # Check for double gameweeks
+                    double_gws = get_double_gameweeks(num_gameweeks)
+                    double_impact = []
+                    
+                    for double_gw in double_gws:
+                        for team_info in double_gw.get("teams_with_doubles", []):
+                            if team_info.get("name") == team_name:
+                                double_impact.append({
+                                    "gameweek": double_gw["gameweek"],
+                                    "fixture_count": team_info.get("fixture_count", 2)
+                                })
+                    
+                    double_gameweek_impacts[name] = double_impact
+                except Exception as e:
+                    print(f"Error getting fixture analysis for {name}: {e}")
+                
+            
+            # Add fixture data to comparison
+            if fixture_comparison:
+                comparison["fixture_comparison"] = {
+                    "upcoming_fixtures": fixture_comparison,
+                    "fixture_scores": fixture_scores,
+                    "blank_gameweeks": blank_gameweek_impacts,
+                    "double_gameweeks": double_gameweek_impacts
+                }
+                
+                # Add fixture advantage assessment
+                if len(fixture_scores) >= 2:
+                    best_fixtures_player = max(fixture_scores.items(), key=lambda x: x[1])[0]
+                    worst_fixtures_player = min(fixture_scores.items(), key=lambda x: x[1])[0]
+                    
+                    comparison["fixture_comparison"]["fixture_advantage"] = {
+                        "best_fixtures": best_fixtures_player,
+                        "worst_fixtures": worst_fixtures_player,
+                        "advantage": f"{best_fixtures_player} has easier upcoming fixtures than {worst_fixtures_player}"
+                    }
+        
+        # Add summary of who's best for each metric
+        comparison["best_performers"] = {}
+        
+        for metric, values in comparison["metrics_comparison"].items():
+            # Determine which metrics should be ranked with higher values as better
+            higher_is_better = metric not in ["price"]
+            
+            # Find the best player for this metric
+            if all(isinstance(v, (int, float)) for v in values.values()):
+                if higher_is_better:
+                    best_name = max(values.items(), key=lambda x: x[1])[0]
+                else:
+                    best_name = min(values.items(), key=lambda x: x[1])[0]
+                    
+                comparison["best_performers"][metric] = best_name
+        
+        # Overall comparison summary
+        player_wins = {name: 0 for name in players_data.keys()}
+        
+        for metric, best_name in comparison["best_performers"].items():
+            player_wins[best_name] = player_wins.get(best_name, 0) + 1
+        
+        # Add fixture advantage to wins if available
+        if include_fixture_analysis and "fixture_comparison" in comparison and "fixture_advantage" in comparison["fixture_comparison"]:
+            best_fixtures_player = comparison["fixture_comparison"]["fixture_advantage"]["best_fixtures"]
+            player_wins[best_fixtures_player] = player_wins.get(best_fixtures_player, 0) + 1
+        
+        comparison["summary"] = {
+            "metrics_won": player_wins,
+            "overall_best": max(player_wins.items(), key=lambda x: x[1])[0] if player_wins else None
+        }
+        
+        return comparison
 
 
     def list_tools(self):
@@ -397,5 +665,6 @@ class FplApp(APIApplication):
         return [self.get_player_information,
                 self.search_fpl_players,
                 self.get_gameweek_status,
-                self.analyze_players
+                self.analyze_players,
+                self.compare_players
                 ]
