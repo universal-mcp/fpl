@@ -1,7 +1,7 @@
 from universal_mcp.applications import APIApplication
 from universal_mcp.integrations import Integration
 from typing import Any
-from universal_mcp_fpl.helper import get_player_info
+from universal_mcp_fpl.helper import get_player_info, search_players
 
 class FplApp(APIApplication):
     """
@@ -32,6 +32,13 @@ class FplApp(APIApplication):
 
         Returns:
             Comprehensive player information including stats and history
+
+        Raises:
+            ValueError: Raised when both player_id and player_name are missing.
+            KeyError: Raised when player is not found in the database.
+
+        Tags:
+            players, important
         """
         return get_player_info(
             player_id,
@@ -42,8 +49,35 @@ class FplApp(APIApplication):
             include_fixtures
         )
 
+    def search_fpl_players(self,
+        query: str,
+        position: str | None = None,
+        team: str | None = None,
+        limit: int = 5
+    ) -> dict[str, Any]:
+        """Search for FPL players by name with optional filtering
+
+        Args:
+            query: Player name or partial name to search for
+            position: Optional position filter (GKP, DEF, MID, FWD)
+            team: Optional team name filter
+            limit: Maximum number of results to return
+
+        Returns:
+            List of matching players with details
+
+        Raises:
+            ValueError: Raised when query parameter is empty or invalid.
+            TypeError: Raised when position or team filters are invalid.
+
+        Tags:
+            players, search, important
+        """
+        return search_players(query, position, team, limit)
+    
+    
     def list_tools(self):
         """
         Lists the available tools (methods) for this application.
         """
-        return [self.get_player_information]
+        return [self.get_player_information,self.search_fpl_players]

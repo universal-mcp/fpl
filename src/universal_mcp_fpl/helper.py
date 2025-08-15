@@ -452,9 +452,9 @@ def get_player_fixtures(player_id: int, num_fixtures: int = 5) -> list[dict[str,
                 if gw_id is not None:
                     current_gameweek = gw_id - 1
                 break
-
-        if not current_gameweek:
-            logger.warning("Could not determine current gameweek")
+    
+    if not current_gameweek:
+        logger.warning("Could not determine current gameweek")
         return []
     
     # Filter upcoming fixtures for player's team
@@ -819,3 +819,54 @@ def get_player_info(
                     fixture_analysis["assessment"] = "Difficult fixtures"
 
     return result
+
+
+def search_players(
+    query: str,
+    position: str | None = None,
+    team: str | None = None,
+    limit: int = 5
+) -> dict[str, Any]:
+    """
+    Search for players by name with optional filtering by position and team.
+
+    Args:
+        query: Player name or partial name to search for
+        position: Optional position filter (GKP, DEF, MID, FWD)
+        team: Optional team name filter
+        limit: Maximum number of results to return
+
+    Returns:
+        List of matching players with details
+    """
+    logger = logging.getLogger(__name__)
+    logger.info(f"Searching players: query={query}, position={position}, team={team}")
+
+    # Find players by name
+    matches = find_players_by_name(query, limit=limit * 2)  # Get more than needed for filtering
+
+    # Apply position filter if specified
+    if position and matches:
+        matches = [p for p in matches if p.get("position") == position.upper()]
+
+    # Apply team filter if specified
+    if team and matches:
+        matches = [
+            p for p in matches
+            if team.lower() in p.get("team", "").lower() or
+            team.lower() in p.get("team_short", "").lower()
+        ]
+
+    # Limit results
+    matches = matches[:limit]
+
+    return {
+        "query": query,
+        "filters": {
+            "position": position,
+            "team": team,
+        },
+        "total_matches": len(matches),
+        "players": matches
+    }
+
