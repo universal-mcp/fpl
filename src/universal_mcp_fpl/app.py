@@ -2,6 +2,9 @@ from universal_mcp.applications import APIApplication
 from universal_mcp.integrations import Integration
 from typing import Any
 from universal_mcp_fpl.helper import get_player_info, search_players
+import datetime
+from universal_mcp_fpl.api import api
+
 
 class FplApp(APIApplication):
     """
@@ -89,15 +92,8 @@ class FplApp(APIApplication):
         Tags:
             gameweek, status, timing, important
         """
-        import datetime
-        from typing import Any
-
-        # Use the helper's api instance if available, else import here
-        try:
-            from . import helper
-            api = helper.api
-        except ImportError:
-            raise RuntimeError("Could not import FPL API helper.")
+       
+        
 
         gameweeks = api.get_gameweeks()
 
