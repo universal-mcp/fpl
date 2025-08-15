@@ -1,13 +1,13 @@
 from universal_mcp.applications import APIApplication
 from universal_mcp.integrations import Integration
 from typing import Any
-from universal_mcp_fpl.helper import get_player_info, search_players, get_players_resource, find_players_by_name
+from universal_mcp_fpl.helper import get_player_info, search_players, get_players_resource, find_players_by_name ,get_team_by_name
 import datetime
 from universal_mcp_fpl.api import api
 from universal_mcp_fpl.position_utils import normalize_position
 from collections import Counter
 
-from universal_mcp_fpl.fixtures import get_player_gameweek_history, get_blank_gameweeks, get_double_gameweeks, analyze_player_fixtures
+from universal_mcp_fpl.fixtures import get_player_gameweek_history, get_blank_gameweeks, get_double_gameweeks, analyze_player_fixtures,get_player_fixtures,get_fixtures_resource
 
 
 
@@ -685,6 +685,267 @@ class FplApp(APIApplication):
 
         return analysis
 
+    def analyze_fixtures(self,
+        entity_type: str = "player",
+        entity_name: str | None = None,
+        num_gameweeks: int = 5,
+        include_blanks: bool = True,
+        include_doubles: bool = True
+    ) -> dict[str, Any]:
+        """Analyze upcoming fixtures for players, teams, or positions
+        
+        Args:
+            entity_type: Type of entity to analyze ("player", "team", or "position")
+            entity_name: Name of the specific entity
+            num_gameweeks: Number of gameweeks to look ahead
+            include_blanks: Whether to include blank gameweek info
+            include_doubles: Whether to include double gameweek info
+            
+        Returns:
+            Fixture analysis with difficulty ratings and summary
+
+        Raises:
+            ValueError: Raised when entity_type parameter is invalid.
+            TypeError: Raised when num_gameweeks parameter is invalid.
+
+        Tags:
+            players, fixtures, important
+
+        """
+        
+        # Normalize entity type
+        entity_type = entity_type.lower()
+        if entity_type not in ["player", "team", "position"]:
+            return {"error": f"Invalid entity type: {entity_type}. Must be 'player', 'team', or 'position'"}
+
+        # Get current gameweek
+        gameweeks_data = api.get_gameweeks()
+        current_gameweek = None
+        
+        for gw in gameweeks_data:
+            if gw.get("is_current"):
+                current_gameweek = gw.get("id")
+                break
+                
+        if current_gameweek is None:
+            # If no current gameweek found, try to find next gameweek
+            for gw in gameweeks_data:
+                if gw.get("is_next"):
+                    gw_id = gw.get("id")
+                    if gw_id is not None:
+                        current_gameweek = gw_id - 1
+                    break
+                    
+        if current_gameweek is None:
+            return {"error": "Could not determine current gameweek"}
+        
+        # Base result structure
+        result = {
+            "entity_type": entity_type,
+            "entity_name": entity_name,
+            "current_gameweek": current_gameweek,
+            "analysis_range": list(range(current_gameweek + 1, current_gameweek + num_gameweeks + 1))
+        }
+        
+        # Handle each entity type
+        if entity_type == "player":
+            # Find player and their team
+            if entity_name is None:
+                return {"error": "Entity name is required for player analysis"}
+            player_matches = find_players_by_name(entity_name)
+            if not player_matches:
+                return {"error": f"No player found matching '{entity_name}'"}
+                
+            active_players = [p for p in player_matches]
+
+            player = active_players[0]
+            result["player"] = {
+                "id": player["id"],
+                "name": player["name"],
+                "team": player["team"],
+                "position": player["position"],
+                "status": "available" if player["status"] == "a" else "unavailable"
+            }
+            
+            # Get fixtures for player's team
+            player_fixtures = get_player_fixtures(player["id"], num_gameweeks)
+            
+            # Calculate difficulty score
+            total_difficulty = sum(f["difficulty"] for f in player_fixtures)
+            avg_difficulty = total_difficulty / len(player_fixtures) if player_fixtures else 0
+            
+            # Scale difficulty (5 is hardest, 1 is easiest - invert so 10 is best)
+            fixture_score = (6 - avg_difficulty) * 2 if player_fixtures else 0
+            
+            result["fixtures"] = player_fixtures
+            result["fixture_analysis"] = {
+                "difficulty_score": round(fixture_score, 1),
+                "fixtures_analyzed": len(player_fixtures),
+                "home_matches": sum(1 for f in player_fixtures if f["location"] == "home"),
+                "away_matches": sum(1 for f in player_fixtures if f["location"] == "away"),
+            }
+            
+            # Add fixture difficulty assessment
+            if fixture_score >= 8:
+                result["fixture_analysis"]["assessment"] = "Excellent fixtures"
+            elif fixture_score >= 6:
+                result["fixture_analysis"]["assessment"] = "Good fixtures"
+            elif fixture_score >= 4:
+                result["fixture_analysis"]["assessment"] = "Average fixtures"
+            else:
+                result["fixture_analysis"]["assessment"] = "Difficult fixtures"
+        
+        elif entity_type == "team":
+            # Find team
+            if entity_name is None:
+                return {"error": "Entity name is required for team analysis"}
+            team = get_team_by_name(entity_name)
+            if not team:
+                return {"error": f"No team found matching '{entity_name}'"}
+                
+            result["team"] = {
+                "id": team["id"],
+                "name": team["name"],
+                "short_name": team["short_name"]
+            }
+            
+            # Get fixtures for team
+            team_fixtures = get_fixtures_resource(team_name=team["name"])
+            
+            # Filter to upcoming fixtures
+            upcoming_fixtures = [
+                f for f in team_fixtures 
+                if f["gameweek"] in result["analysis_range"]
+            ]
+            
+            # Format fixtures
+            formatted_fixtures = []
+            for fixture in upcoming_fixtures:
+                is_home = fixture["home_team"]["name"] == team["name"]
+                opponent = fixture["away_team"] if is_home else fixture["home_team"]
+                difficulty = fixture["difficulty"]["home" if is_home else "away"]
+                
+                formatted_fixtures.append({
+                    "gameweek": fixture["gameweek"],
+                    "opponent": opponent["name"],
+                    "location": "home" if is_home else "away",
+                    "difficulty": difficulty
+                })
+                
+            result["fixtures"] = formatted_fixtures
+            
+            # Calculate difficulty metrics
+            if formatted_fixtures:
+                total_difficulty = sum(f["difficulty"] for f in formatted_fixtures)
+                avg_difficulty = total_difficulty / len(formatted_fixtures)
+                fixture_score = (6 - avg_difficulty) * 2
+                
+                result["fixture_analysis"] = {
+                    "difficulty_score": round(fixture_score, 1),
+                    "fixtures_analyzed": len(formatted_fixtures),
+                    "home_matches": sum(1 for f in formatted_fixtures if f["location"] == "home"),
+                    "away_matches": sum(1 for f in formatted_fixtures if f["location"] == "away"),
+                }
+                
+                # Add fixture difficulty assessment
+                if fixture_score >= 8:
+                    result["fixture_analysis"]["assessment"] = "Excellent fixtures"
+                elif fixture_score >= 6:
+                    result["fixture_analysis"]["assessment"] = "Good fixtures"
+                elif fixture_score >= 4:
+                    result["fixture_analysis"]["assessment"] = "Average fixtures"
+                else:
+                    result["fixture_analysis"]["assessment"] = "Difficult fixtures"
+            else:
+                result["fixture_analysis"] = {
+                    "difficulty_score": 0,
+                    "fixtures_analyzed": 0,
+                    "assessment": "No upcoming fixtures found"
+                }
+        
+        elif entity_type == "position":
+            # Normalize position
+            normalized_position = normalize_position(entity_name)
+            if not normalized_position or normalized_position not in ["GKP", "DEF", "MID", "FWD"]:
+                return {"error": f"Invalid position: {entity_name}"}
+                
+            result["position"] = normalized_position
+            
+            # Get all players in this position
+            all_players = get_players_resource()
+            position_players = [p for p in all_players if p.get("position") == normalized_position]
+            
+            # Get teams with players in this position
+            teams_with_position = set(p.get("team") for p in position_players)
+            
+            # Get upcoming fixtures for these teams
+            all_fixtures = get_fixtures_resource()
+            upcoming_fixtures = [
+                f for f in all_fixtures 
+                if f["gameweek"] in result["analysis_range"]
+            ]
+            
+            # Calculate average fixture difficulty by team
+            team_difficulties = {}
+            
+            for team in teams_with_position:
+                team_fixtures = []
+                
+                for fixture in upcoming_fixtures:
+                    is_home = fixture["home_team"]["name"] == team
+                    is_away = fixture["away_team"]["name"] == team
+                    
+                    if is_home or is_away:
+                        difficulty = fixture["difficulty"]["home" if is_home else "away"]
+                        team_fixtures.append({
+                            "gameweek": fixture["gameweek"],
+                            "opponent": fixture["away_team"]["name"] if is_home else fixture["home_team"]["name"],
+                            "location": "home" if is_home else "away",
+                            "difficulty": difficulty
+                        })
+                
+                if team_fixtures:
+                    total_diff = sum(f["difficulty"] for f in team_fixtures)
+                    avg_diff = total_diff / len(team_fixtures)
+                    fixture_score = (6 - avg_diff) * 2
+                    
+                    team_difficulties[team] = {
+                        "fixtures": team_fixtures,
+                        "difficulty_score": round(fixture_score, 1),
+                        "fixtures_analyzed": len(team_fixtures)
+                    }
+            
+            # Sort teams by fixture difficulty (best first)
+            sorted_teams = sorted(
+                team_difficulties.items(),
+                key=lambda x: x[1]["difficulty_score"],
+                reverse=True
+            )
+            
+            result["team_fixtures"] = {
+                team: data for team, data in sorted_teams[:10]  # Top 10 teams with best fixtures
+            }
+            
+            # Add recommendation of teams with best fixtures
+            if sorted_teams:
+                best_teams = [team for team, data in sorted_teams[:3]]
+                result["recommendations"] = {
+                    "teams_with_best_fixtures": best_teams,
+                    "analysis": f"Teams with players in position {normalized_position} with the best upcoming fixtures: {', '.join(best_teams)}"
+                }
+        
+        # Add blank and double gameweek information if requested
+        if include_blanks:
+            blank_gameweeks = get_blank_gameweeks(num_gameweeks)
+            result["blank_gameweeks"] = blank_gameweeks
+            
+        if include_doubles:
+            double_gameweeks = get_double_gameweeks(num_gameweeks)
+            result["double_gameweeks"] = double_gameweeks
+        
+        return result
+    
+
     def list_tools(self):
         """
         Lists the available tools (methods) for this application.
@@ -694,5 +955,6 @@ class FplApp(APIApplication):
                 self.get_gameweek_status,
                 self.analyze_players,
                 self.compare_players,
-                self.analyze_player_fixtures
+                self.analyze_player_fixtures,
+                self.analyze_fixtures
                 ]
