@@ -5,6 +5,7 @@ logger = logging.getLogger("fpl-mcp-server.fixtures")
 from universal_mcp_fpl.api import api
 
 
+
 # Resources
 
 def get_players_resource(name_filter: str | None = None, team_filter: str | None = None) -> list[dict[str, Any]]:
@@ -869,4 +870,5 @@ def search_players(
         "total_matches": len(matches),
         "players": matches
     }
+
 

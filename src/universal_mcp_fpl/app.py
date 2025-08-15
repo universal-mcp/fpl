@@ -1,9 +1,14 @@
 from universal_mcp.applications import APIApplication
 from universal_mcp.integrations import Integration
 from typing import Any
-from universal_mcp_fpl.helper import get_player_info, search_players
+from universal_mcp_fpl.helper import get_player_info, search_players, get_players_resource
 import datetime
 from universal_mcp_fpl.api import api
+from universal_mcp_fpl.position_utils import normalize_position
+from collections import Counter
+
+from universal_mcp_fpl.fixtures import get_player_gameweek_history
+
 
 
 class FplApp(APIApplication):
@@ -133,11 +138,335 @@ class FplApp(APIApplication):
             }
         }
     
+    def analyze_players(self,
+        position: str | None = None,
+        team: str | None = None,
+        min_price: float | None = None,
+        max_price: float | None = None,
+        min_points: int | None = None,
+        min_ownership: float | None = None,
+        max_ownership: float | None = None,
+        form_threshold: float | None = None,
+        include_gameweeks: bool = False,
+        num_gameweeks: int = 5,
+        sort_by: str = "total_points",
+        sort_order: str = "desc",
+        limit: int = 20 
+    ) -> dict[str, Any]:
+        """Filter and analyze FPL players based on multiple criteria
+    
+    Args:
+        position: Player position (e.g., "midfielders", "defenders")
+        team: Team name filter
+        min_price: Minimum player price in millions
+        max_price: Maximum player price in millions
+        min_points: Minimum total points
+        min_ownership: Minimum ownership percentage
+        max_ownership: Maximum ownership percentage
+        form_threshold: Minimum form rating
+        include_gameweeks: Whether to include gameweek-by-gameweek data
+        num_gameweeks: Number of recent gameweeks to include
+        sort_by: Metric to sort results by (default: total_points)
+        sort_order: Sort direction ("asc" or "desc")
+        limit: Maximum number of players to return
+        
+            Returns:
+            Filtered player data with summary statistics
+        """
+        if isinstance(position, dict):
+            if 'position' in position:
+                position = position['position']  # type: ignore
+            else:
+                position = None
+                
+        if isinstance(team, dict):
+            if 'team' in team:
+                team = team['team']  # type: ignore
+            else:
+                team = None
+        
+        if isinstance(min_price, dict):
+            if 'min_price' in min_price:
+                min_price = min_price['min_price']  # type: ignore
+            else:
+                min_price = None
+                
+        if isinstance(max_price, dict):
+            if 'max_price' in max_price:
+                max_price = max_price['max_price']
+            else:
+                max_price = None
+                
+        if isinstance(min_points, dict):
+            if 'min_points' in min_points:
+                min_points = min_points['min_points']
+            else:
+                min_points = None
+                
+        if isinstance(min_ownership, dict):
+            if 'min_ownership' in min_ownership:
+                min_ownership = min_ownership['min_ownership']
+            else:
+                min_ownership = None
+                
+        if isinstance(max_ownership, dict):
+            if 'max_ownership' in max_ownership:
+                max_ownership = max_ownership['max_ownership']
+            else:
+                max_ownership = None
+                
+        if isinstance(form_threshold, dict):
+            if 'form_threshold' in form_threshold:
+                form_threshold = form_threshold['form_threshold']
+            else:
+                form_threshold = None
+                
+        if isinstance(include_gameweeks, dict):
+            if 'include_gameweeks' in include_gameweeks:
+                include_gameweeks = include_gameweeks['include_gameweeks']
+            else:
+                include_gameweeks = False
+                
+        if isinstance(num_gameweeks, dict):
+            if 'num_gameweeks' in num_gameweeks:
+                num_gameweeks = num_gameweeks['num_gameweeks']
+            else:
+                num_gameweeks = 5
+                
+        if isinstance(sort_by, dict):
+            if 'sort_by' in sort_by:
+                sort_by = sort_by['sort_by']  # type: ignore
+            else:
+                sort_by = "total_points"
+                
+        if isinstance(sort_order, dict):
+            if 'sort_order' in sort_order:
+                sort_order = sort_order['sort_order']  # type: ignore
+            else:
+                sort_order = "desc"
+                
+        if isinstance(limit, dict):
+            if 'limit' in limit:
+                limit = limit['limit']
+            else:
+                limit = 20
+        
+        # Get cached complete player dataset
+        all_players = get_players_resource()
+        
+        # Normalize position if provided
+        normalized_position = normalize_position(position) if position else None
+        position_changed = normalized_position != position if position else False
+        
+        # Apply all filters
+        filtered_players = []
+        for player in all_players:
+            # Check position filter
+            if normalized_position and player.get("position") != normalized_position:
+                continue
+                
+            # Check team filter
+            if team and not (
+                team.lower() in player.get("team", "").lower() or 
+                team.lower() in player.get("team_short", "").lower()
+            ):
+                continue
+                
+            # Check price range
+            if min_price is not None and player.get("price", 0) < min_price:
+                continue
+            if max_price is not None and player.get("price", 0) > max_price:
+                continue
+                
+            # Check points threshold
+            if min_points is not None and player.get("points", 0) < min_points:
+                continue
+                
+            # Check ownership range
+            try:
+                ownership = float(player.get("selected_by_percent", 0).replace("%", ""))
+                if min_ownership is not None and ownership < min_ownership:
+                    continue
+                if max_ownership is not None and ownership > max_ownership:
+                    continue
+            except (ValueError, TypeError):
+                # Skip ownership check if value can't be converted
+                pass
+                
+            # Check form threshold
+            try:
+                form = float(player.get("form", 0))
+                if form_threshold is not None and form < form_threshold:
+                    continue
+            except (ValueError, TypeError):
+                # Skip form check if value can't be converted
+                pass
+
+            player['status'] = "available" if player.get("status") == "a" else "unavailable"
+                
+            # Player passed all filters
+            filtered_players.append(player)
+        
+        # Sort results
+        reverse = sort_order.lower() != "asc"
+        try:
+            # Handle numeric sorting properly
+            numeric_fields = ["points", "price", "form", "selected_by_percent", "value"]
+            if sort_by in numeric_fields:
+                filtered_players.sort(
+                    key=lambda p: float(p.get(sort_by, 0)) 
+                    if p.get(sort_by) is not None else 0,
+                    reverse=reverse
+                )
+            else:
+                filtered_players.sort(
+                    key=lambda p: p.get(sort_by, ""), 
+                    reverse=reverse
+                )
+        except (KeyError, ValueError):
+            # Fall back to points sorting
+            filtered_players.sort(
+                key=lambda p: float(p.get("points", 0)), 
+                reverse=True
+            )
+        
+        # Calculate summary statistics
+        total_players = len(filtered_players)
+        average_points = sum(float(p.get("points", 0)) for p in filtered_players) / max(1, total_players)
+        average_price = sum(float(p.get("price", 0)) for p in filtered_players) / max(1, total_players)
+        
+        # Count position and team distributions
+        position_counts = Counter(p.get("position") for p in filtered_players)
+        team_counts = Counter(p.get("team") for p in filtered_players)
+        
+        # Build filter description
+        applied_filters = []
+        if normalized_position:
+            applied_filters.append(f"Position: {normalized_position}")
+        if team:
+            applied_filters.append(f"Team: {team}")
+        if min_price is not None:
+            applied_filters.append(f"Min price: £{min_price}m")
+        if max_price is not None:
+            applied_filters.append(f"Max price: £{max_price}m")
+        if min_points is not None:
+            applied_filters.append(f"Min points: {min_points}")
+        if min_ownership is not None:
+            applied_filters.append(f"Min ownership: {min_ownership}%")
+        if max_ownership is not None:
+            applied_filters.append(f"Max ownership: {max_ownership}%")
+        if form_threshold is not None:
+            applied_filters.append(f"Min form: {form_threshold}")
+        
+        # Build results with summary and detail sections
+        result = {
+            "summary": {
+                "total_matches": total_players,
+                "filters_applied": applied_filters,
+                "average_points": round(average_points, 1),
+                "average_price": round(average_price, 2),
+                "position_distribution": dict(position_counts),
+                "team_distribution": dict(sorted(
+                    team_counts.items(), 
+                    key=lambda x: x[1], 
+                    reverse=True
+                )[:10]),  # Top 10 teams
+            },
+            "players": filtered_players[:limit]  # Apply limit to detailed results
+        }
+        
+        # Add position normalization note if relevant
+        if position_changed:
+            result["summary"]["position_note"] = f"'{position}' was interpreted as '{normalized_position}'"
+        
+        # Include gameweek history if requested
+        if include_gameweeks and filtered_players:
+            try:
+                # Get history for top players (limit)
+                player_ids = [p.get("id") for p in filtered_players[:limit]]
+                gameweek_data = get_player_gameweek_history(player_ids, num_gameweeks)
+                
+                # Add gameweek data to the result
+                result["gameweek_data"] = gameweek_data
+                
+                # Calculate and add recent form stats based on gameweek history
+                recent_form_stats = {}
+                
+                if "players" in gameweek_data:
+                    for player_id, history in gameweek_data["players"].items():
+                        player_id = int(player_id)
+                        
+                        # Find matching player in our filtered list
+                        player_info = next((p for p in filtered_players if p.get("id") == player_id), None)
+                        if not player_info:
+                            continue
+                        
+                        # Initialize stats
+                        recent_stats = {
+                            "player_name": player_info.get("name", "Unknown"),
+                            "matches": len(history),
+                            "minutes": 0,
+                            "points": 0,
+                            "goals": 0,
+                            "assists": 0,
+                            "clean_sheets": 0,
+                            "bonus": 0,
+                            "expected_goals": 0,
+                            "expected_assists": 0,
+                            "expected_goal_involvements": 0,
+                            "points_per_game": 0,
+                            "gameweeks_analyzed": gameweek_data.get("gameweeks", [])
+                        }
+                        
+                        # Sum up stats from gameweek history
+                        for gw in history:
+                            recent_stats["minutes"] += gw.get("minutes", 0)
+                            recent_stats["points"] += gw.get("points", 0)
+                            recent_stats["goals"] += gw.get("goals", 0)
+                            recent_stats["assists"] += gw.get("assists", 0)
+                            recent_stats["clean_sheets"] += gw.get("clean_sheets", 0)
+                            recent_stats["bonus"] += gw.get("bonus", 0)
+                            recent_stats["expected_goals"] += float(gw.get("expected_goals", 0))
+                            recent_stats["expected_assists"] += float(gw.get("expected_assists", 0))
+                            recent_stats["expected_goal_involvements"] += float(gw.get("expected_goal_involvements", 0))
+                        
+                        # Calculate averages
+                        if recent_stats["matches"] > 0:
+                            recent_stats["points_per_game"] = round(recent_stats["points"] / recent_stats["matches"], 1)
+                            
+                        # Round floating point values
+                        recent_stats["expected_goals"] = round(recent_stats["expected_goals"], 2)
+                        recent_stats["expected_assists"] = round(recent_stats["expected_assists"], 2)
+                        recent_stats["expected_goal_involvements"] = round(recent_stats["expected_goal_involvements"], 2)
+                        
+                        recent_form_stats[str(player_id)] = recent_stats
+                
+                # Add recent form stats to result
+                result["recent_form"] = {
+                    "description": f"Stats for the last {num_gameweeks} gameweeks only",
+                    "player_stats": recent_form_stats
+                }
+                
+                # Add labels to clarify which stats are season-long vs. recent
+                for player in result["players"]:
+                    player["stats_type"] = "season_totals"
+                    
+            except Exception as e:
+                
+                result["gameweek_data_error"] = str(e)
+        
+        return result
+        
+
+
+
+
     def list_tools(self):
         """
         Lists the available tools (methods) for this application.
         """
         return [self.get_player_information,
                 self.search_fpl_players,
-                self.get_gameweek_status
+                self.get_gameweek_status,
+                self.analyze_players
                 ]
