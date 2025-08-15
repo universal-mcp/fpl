@@ -1,13 +1,13 @@
 from universal_mcp.applications import APIApplication
 from universal_mcp.integrations import Integration
 from typing import Any
-from universal_mcp_fpl.helper import get_player_info, search_players, get_players_resource, find_players_by_name ,get_team_by_name
+from universal_mcp_fpl.utils.helper import get_player_info, search_players, get_players_resource, find_players_by_name ,get_team_by_name
 import datetime
-from universal_mcp_fpl.api import api
-from universal_mcp_fpl.position_utils import normalize_position
+from universal_mcp_fpl.utils.api import api
+from universal_mcp_fpl.utils.position_utils import normalize_position
 from collections import Counter
 
-from universal_mcp_fpl.fixtures import get_player_gameweek_history, get_blank_gameweeks, get_double_gameweeks, analyze_player_fixtures,get_player_fixtures,get_fixtures_resource
+from universal_mcp_fpl.utils.fixtures import get_player_gameweek_history, get_blank_gameweeks, get_double_gameweeks, analyze_player_fixtures,get_player_fixtures,get_fixtures_resource
 
 
 

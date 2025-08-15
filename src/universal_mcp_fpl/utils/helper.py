@@ -2,7 +2,7 @@ import logging
 from typing import Any
 import datetime
 logger = logging.getLogger("fpl-mcp-server.fixtures")
-from universal_mcp_fpl.api import api
+from universal_mcp_fpl.utils.api import api
 
 
 

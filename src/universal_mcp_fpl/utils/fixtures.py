@@ -3,7 +3,7 @@
 import logging
 from typing import List, Dict, Any, Optional
 
-from universal_mcp_fpl.api import api
+from universal_mcp_fpl.utils.api import api
 
 # Set up logging following project conventions
 logger = logging.getLogger("fpl-mcp-server.fixtures")
