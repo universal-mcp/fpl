@@ -155,23 +155,30 @@ class FplApp(APIApplication):
     ) -> dict[str, Any]:
         """Filter and analyze FPL players based on multiple criteria
     
-    Args:
-        position: Player position (e.g., "midfielders", "defenders")
-        team: Team name filter
-        min_price: Minimum player price in millions
-        max_price: Maximum player price in millions
-        min_points: Minimum total points
-        min_ownership: Minimum ownership percentage
-        max_ownership: Maximum ownership percentage
-        form_threshold: Minimum form rating
-        include_gameweeks: Whether to include gameweek-by-gameweek data
-        num_gameweeks: Number of recent gameweeks to include
-        sort_by: Metric to sort results by (default: total_points)
-        sort_order: Sort direction ("asc" or "desc")
-        limit: Maximum number of players to return
+        Args:
+            position: Player position (e.g., "midfielders", "defenders")
+            team: Team name filter
+            min_price: Minimum player price in millions
+            max_price: Maximum player price in millions
+            min_points: Minimum total points
+            min_ownership: Minimum ownership percentage
+            max_ownership: Maximum ownership percentage
+            form_threshold: Minimum form rating
+            include_gameweeks: Whether to include gameweek-by-gameweek data
+            num_gameweeks: Number of recent gameweeks to include
+            sort_by: Metric to sort results by (default: total_points)
+            sort_order: Sort direction ("asc" or "desc")
+            limit: Maximum number of players to return
         
-            Returns:
+        Returns:
             Filtered player data with summary statistics
+
+        Raises:
+            ValueError: Raised when query parameter is empty or invalid.
+            TypeError: Raised when position or team filters are invalid.
+
+        Tags:
+            players, analyze, important    
         """
         # Get cached complete player dataset
         all_players = get_players_resource()
