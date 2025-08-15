@@ -657,6 +657,33 @@ class FplApp(APIApplication):
         
         return comparison
 
+    def analyze_player_fixtures(self, player_name: str, num_fixtures: int = 5) -> dict[str, Any]:
+        """Analyze upcoming fixtures for a player and provide a difficulty rating
+
+        Args:
+            player_name: Player name to search for
+            num_fixtures: Number of upcoming fixtures to analyze (default: 5)
+
+        Returns:
+            Analysis of player's upcoming fixtures with difficulty ratings
+
+        Raises:
+            ValueError: Raised when player_name parameter is empty or invalid.
+            TypeError: Raised when num_fixtures parameter is invalid.
+
+        Tags:
+            players, fixtures, important
+        """
+
+        # Find the player
+        player_matches = find_players_by_name(player_name)
+        if not player_matches:
+            return {"error": f"No player found matching '{player_name}'"}
+
+        player = player_matches[0]
+        analysis = analyze_player_fixtures(player["id"], num_fixtures)
+
+        return analysis
 
     def list_tools(self):
         """
@@ -666,5 +693,6 @@ class FplApp(APIApplication):
                 self.search_fpl_players,
                 self.get_gameweek_status,
                 self.analyze_players,
-                self.compare_players
+                self.compare_players,
+                self.analyze_player_fixtures
                 ]
