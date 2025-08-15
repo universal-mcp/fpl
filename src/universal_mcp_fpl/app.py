@@ -75,9 +75,73 @@ class FplApp(APIApplication):
         """
         return search_players(query, position, team, limit)
     
+    def get_gameweek_status(self) -> dict[str, Any]:
+        """
+        Get precise information about current, previous, and next gameweeks.
+
+        Returns:
+            Detailed information about gameweek timing, including exact status.
+
+        Raises:
+            RuntimeError: If gameweek data cannot be retrieved.
+            ValueError: If gameweek data is malformed or incomplete.
+
+        Tags:
+            gameweek, status, timing, important
+        """
+        import datetime
+        from typing import Any
+
+        # Use the helper's api instance if available, else import here
+        try:
+            from . import helper
+            api = helper.api
+        except ImportError:
+            raise RuntimeError("Could not import FPL API helper.")
+
+        gameweeks = api.get_gameweeks()
+
+        # Find current, previous, and next gameweeks
+        current_gw = next((gw for gw in gameweeks if gw.get("is_current")), None)
+        previous_gw = next((gw for gw in gameweeks if gw.get("is_previous")), None)
+        next_gw = next((gw for gw in gameweeks if gw.get("is_next")), None)
+
+        # Determine exact current gameweek status
+        current_status = "Not Started"
+        if current_gw:
+            deadline = datetime.datetime.strptime(current_gw["deadline_time"], "%Y-%m-%dT%H:%M:%SZ")
+            now = datetime.datetime.utcnow()
+
+            if now < deadline:
+                current_status = "Upcoming"
+                time_until = deadline - now
+                hours_until = time_until.total_seconds() / 3600
+
+                if hours_until < 24:
+                    current_status = "Imminent (< 24h)"
+            else:
+                if current_gw.get("finished"):
+                    current_status = "Complete"
+                else:
+                    current_status = "In Progress"
+
+        return {
+            "current_gameweek": current_gw and current_gw["id"],
+            "current_status": current_status,
+            "previous_gameweek": previous_gw and previous_gw["id"],
+            "next_gameweek": next_gw and next_gw["id"],
+            "season_progress": f"GW {current_gw['id']}/38" if current_gw else "Unknown",
+            "exact_timing": {
+                "current_deadline": current_gw and current_gw.get("deadline_time"),
+                "next_deadline": next_gw and next_gw.get("deadline_time")
+            }
+        }
     
     def list_tools(self):
         """
         Lists the available tools (methods) for this application.
         """
-        return [self.get_player_information,self.search_fpl_players]
+        return [self.get_player_information,
+                self.search_fpl_players,
+                self.get_gameweek_status
+                ]
