@@ -944,7 +944,42 @@ class FplApp(APIApplication):
             result["double_gameweeks"] = double_gameweeks
         
         return result
+
+    def get_blank_gameweeks(self, num_weeks: int = 5) -> list[dict[str, Any]]:
+        """Get information about upcoming blank gameweeks where teams don't have fixtures
+
+        Args:
+            num_weeks: Number of upcoming gameweeks to check (default: 5)
+
+        Returns:
+            Information about blank gameweeks and affected teams
+
+        Raises:
+            ValueError: Raised when num_weeks parameter is invalid.
+            TypeError: Raised when num_weeks parameter has incorrect type.
+
+        Tags:
+            gameweeks, blanks, important
+        """
+        return get_blank_gameweeks(num_weeks)
+
+    def get_double_gameweeks(self, num_weeks: int = 5) -> list[dict[str, Any]]:
+        """Get information about upcoming double gameweeks where teams have multiple fixtures
+        
+        Args:
+            num_weeks: Number of upcoming gameweeks to check (default: 5)
+        
+        Returns:
+            Information about double gameweeks and affected teams
     
+        Raises:
+            ValueError: Raised when num_weeks parameter is invalid.
+            TypeError: Raised when num_weeks parameter has incorrect type.
+
+        Tags:
+            gameweeks, doubles, important
+        """
+        return get_double_gameweeks(num_weeks)
 
     def list_tools(self):
         """
@@ -956,5 +991,7 @@ class FplApp(APIApplication):
                 self.analyze_players,
                 self.compare_players,
                 self.analyze_player_fixtures,
-                self.analyze_fixtures
+                self.analyze_fixtures,
+                self.get_blank_gameweeks,
+                self.get_double_gameweeks
                 ]
